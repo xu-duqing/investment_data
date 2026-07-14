@@ -27,6 +27,7 @@ QLIB_SOURCE_DIR="${BUILD_ROOT}/qlib_source"
 QLIB_NORMALIZE_DIR="${BUILD_ROOT}/qlib_normalize"
 QLIB_INDEX_DIR="${BUILD_ROOT}/qlib_index"
 QLIB_BIN_DIR="${BUILD_ROOT}/qlib_bin"
+QLIB_EXPORT_MAX_WORKERS="${QLIB_EXPORT_MAX_WORKERS:-8}"
 DUMP_QLIB_MAX_WORKERS="${DUMP_QLIB_MAX_WORKERS:-8}"
 
 if [ -z "${PYTHON_BIN:-}" ]; then
@@ -117,8 +118,9 @@ cd "${INVESTMENT_DATA_DIR}"
 rm -rf "${BUILD_ROOT}"
 mkdir -p "${QLIB_SOURCE_DIR}" "${QLIB_NORMALIZE_DIR}" "${QLIB_INDEX_DIR}" "${QLIB_BIN_DIR}"
 
-log_step "Dumping MySQL data to qlib source CSVs"
-QLIB_SOURCE_DIR="${QLIB_SOURCE_DIR}" "${PYTHON_BIN}" ./qlib/dump_all_to_qlib_source.py
+log_step "Dumping MySQL data to qlib source CSVs with ${QLIB_EXPORT_MAX_WORKERS} workers"
+QLIB_SOURCE_DIR="${QLIB_SOURCE_DIR}" "${PYTHON_BIN}" ./qlib/dump_all_to_qlib_source.py \
+    --max-workers="${QLIB_EXPORT_MAX_WORKERS}"
 
 export PYTHONPATH="${QLIB_REPO_DIR}/scripts:${PYTHONPATH:-}"
 cd ./qlib

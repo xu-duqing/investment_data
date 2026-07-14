@@ -80,8 +80,13 @@ Useful runtime options:
 TRACE=1 ./dump_qlib_bin.sh
 CHECK_FRESHNESS=1 ./dump_qlib_bin.sh
 CLEAN_QLIB_BUILD_ROOT=0 ./dump_qlib_bin.sh
+QLIB_EXPORT_MAX_WORKERS=8 ./dump_qlib_bin.sh
 DUMP_QLIB_MAX_WORKERS=4 ./dump_qlib_bin.sh
 ```
+
+`QLIB_EXPORT_MAX_WORKERS` controls concurrent MySQL symbol exports. Start with
+8 and reduce it if the database server reaches its connection or I/O limits.
+`DUMP_QLIB_MAX_WORKERS` separately controls CSV normalization workers.
 
 ## Validation
 
