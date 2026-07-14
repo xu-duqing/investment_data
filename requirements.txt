@@ -1,0 +1,12 @@
+pandas
+numpy
+tqdm
+loguru
+joblib
+fire
+requests
+lxml
+beautifulsoup4
+bs4
+soupsieve
+setuptools-scm
