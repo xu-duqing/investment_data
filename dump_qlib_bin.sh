@@ -31,7 +31,9 @@ QLIB_EXPORT_MAX_WORKERS="${QLIB_EXPORT_MAX_WORKERS:-8}"
 DUMP_QLIB_MAX_WORKERS="${DUMP_QLIB_MAX_WORKERS:-8}"
 
 if [ -z "${PYTHON_BIN:-}" ]; then
-    if [ -x "${SCRIPT_DIR}/.venv/bin/python" ]; then
+    if [ -x "${QLIB_REPO_DIR}/.venv/bin/python" ]; then
+        PYTHON_BIN="${QLIB_REPO_DIR}/.venv/bin/python"
+    elif [ -x "${SCRIPT_DIR}/.venv/bin/python" ]; then
         PYTHON_BIN="${SCRIPT_DIR}/.venv/bin/python"
     else
         PYTHON_BIN="python3"
@@ -66,31 +68,26 @@ log_step() {
     echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] $*"
 }
 
-mysql_query_scalar() {
-    MYSQL_PWD="${MYSQL_PASSWORD}" mysql \
-        -h "${MYSQL_HOST}" \
-        -P "${MYSQL_PORT}" \
-        -u "${MYSQL_USER}" \
-        -D "${MYSQL_DATABASE}" \
-        --batch \
-        --raw \
-        --skip-column-names \
-        --default-character-set=utf8mb4 \
-        -e "$1"
+run_python() {
+    if [ -z "${PYTHON_BIN:-}" ] || [ ! -x "${PYTHON_BIN}" ] || [ -d "${PYTHON_BIN}" ]; then
+        echo "PYTHON_BIN must be an executable Python file, got: ${PYTHON_BIN:-<empty>}" >&2
+        exit 1
+    fi
+    "${PYTHON_BIN}" "$@"
 }
 
-if ! command -v mysql >/dev/null 2>&1; then
-    echo "mysql client is required but was not found in PATH" >&2
-    exit 1
-fi
+mysql_query_scalar() {
+    run_python "${INVESTMENT_DATA_DIR}/qlib/mysql_query.py" --skip-column-names --execute "$1"
+}
 
 if ! command -v git >/dev/null 2>&1; then
     echo "git is required but was not found in PATH" >&2
     exit 1
 fi
 
-if ! "${PYTHON_BIN}" -c "import setuptools_scm" >/dev/null 2>&1; then
-    echo "Python dependency setuptools_scm is missing. Run: pip install -r requirements.txt" >&2
+if ! run_python -c "import pymysql, setuptools_scm" >/dev/null 2>&1; then
+    echo "Project Python dependencies are missing." >&2
+    echo "Run: ${PYTHON_BIN} -m pip install -r ${INVESTMENT_DATA_DIR}/requirements.txt" >&2
     exit 1
 fi
 
@@ -102,6 +99,19 @@ require_env MYSQL_DATABASE
 
 if [ ! -d "${QLIB_REPO_DIR}/.git" ]; then
     git clone "${QLIB_REPO}" "${QLIB_REPO_DIR}"
+fi
+
+export PYTHONPATH="${QLIB_REPO_DIR}:${QLIB_REPO_DIR}/scripts:${PYTHONPATH:-}"
+if ! run_python -c "import qlib; from qlib.data._libs.rolling import rolling_slope; from qlib.data._libs.expanding import expanding_slope; from data_collector.yahoo import collector" >/dev/null 2>&1; then
+    echo "Qlib Python dependencies or compiled extensions are missing." >&2
+    echo "Prepare Qlib with its own dependency sources:" >&2
+    echo "  cd ${QLIB_REPO_DIR}" >&2
+    echo "  python3 -m venv --system-site-packages .venv" >&2
+    echo "  . .venv/bin/activate" >&2
+    echo "  python -m pip install -e '.[test]'" >&2
+    echo "  python -m pip install -r scripts/data_collector/yahoo/requirements.txt" >&2
+    echo "  python setup.py build_ext --inplace" >&2
+    exit 1
 fi
 
 log_step "Checking MySQL source connection"
@@ -119,20 +129,19 @@ rm -rf "${BUILD_ROOT}"
 mkdir -p "${QLIB_SOURCE_DIR}" "${QLIB_NORMALIZE_DIR}" "${QLIB_INDEX_DIR}" "${QLIB_BIN_DIR}"
 
 log_step "Dumping MySQL data to qlib source CSVs with ${QLIB_EXPORT_MAX_WORKERS} workers"
-QLIB_SOURCE_DIR="${QLIB_SOURCE_DIR}" "${PYTHON_BIN}" ./qlib/dump_all_to_qlib_source.py \
+QLIB_SOURCE_DIR="${QLIB_SOURCE_DIR}" run_python ./qlib/dump_all_to_qlib_source.py \
     --max-workers="${QLIB_EXPORT_MAX_WORKERS}"
 
-export PYTHONPATH="${QLIB_REPO_DIR}/scripts:${PYTHONPATH:-}"
 cd ./qlib
 log_step "Normalizing qlib data with ${DUMP_QLIB_MAX_WORKERS} workers"
-"${PYTHON_BIN}" ./normalize.py normalize_data \
+run_python ./normalize.py normalize_data \
     --source_dir "${QLIB_SOURCE_DIR}/" \
     --normalize_dir "${QLIB_NORMALIZE_DIR}" \
     --max_workers="${DUMP_QLIB_MAX_WORKERS}" \
     --date_field_name="tradedate"
 
 log_step "Dumping normalized qlib data to binary files"
-"${PYTHON_BIN}" "${QLIB_REPO_DIR}/scripts/dump_bin.py" dump_all \
+run_python "${QLIB_REPO_DIR}/scripts/dump_bin.py" dump_all \
     --data_path "${QLIB_NORMALIZE_DIR}/" \
     --qlib_dir "${QLIB_BIN_DIR}" \
     --date_field_name=tradedate \
@@ -140,11 +149,11 @@ log_step "Dumping normalized qlib data to binary files"
 
 mkdir -p "${QLIB_INDEX_DIR}"
 log_step "Dumping qlib index constituents"
-QLIB_INDEX_DIR="${QLIB_INDEX_DIR}" "${PYTHON_BIN}" ./dump_index_weight.py
+QLIB_INDEX_DIR="${QLIB_INDEX_DIR}" run_python ./dump_index_weight.py
 
 cd "${INVESTMENT_DATA_DIR}"
 log_step "Dumping qlib trade calendar"
-"${PYTHON_BIN}" ./tushare/dump_day_calendar.py "${QLIB_BIN_DIR}/" --exchange "${MYSQL_EXCHANGE}"
+run_python "${INVESTMENT_DATA_DIR}/tushare/dump_day_calendar.py" "${QLIB_BIN_DIR}" --exchange "${MYSQL_EXCHANGE}"
 
 if [ "${CHECK_FRESHNESS:-0}" = "1" ]; then
     source_max_date=$(mysql_query_scalar "SELECT DATE_FORMAT(MAX(trade_date), '%Y-%m-%d') FROM stock_daily")

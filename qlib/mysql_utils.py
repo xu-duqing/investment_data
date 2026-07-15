@@ -1,6 +1,6 @@
-import csv
+import datetime as dt
+import decimal
 import os
-import subprocess
 from typing import Dict, Iterable, Iterator, List, Optional
 
 
@@ -11,35 +11,34 @@ def require_env(name: str) -> str:
     return value
 
 
-def mysql_env() -> Dict[str, str]:
-    env = os.environ.copy()
-    env["MYSQL_PWD"] = require_env("MYSQL_PASSWORD")
-    return env
+def mysql_connection(*, quick: bool = False):
+    try:
+        import pymysql
+        from pymysql.cursors import DictCursor, SSDictCursor
+    except ImportError as exc:
+        raise RuntimeError("Python dependency PyMySQL is missing. Run: pip install -r requirements.txt") from exc
 
-
-def mysql_cmd(*, quick: bool = False) -> List[str]:
-    cmd = [
-        "mysql",
-        "-h",
-        require_env("MYSQL_HOST"),
-        "-P",
-        require_env("MYSQL_PORT"),
-        "-u",
-        require_env("MYSQL_USER"),
-        "-D",
-        require_env("MYSQL_DATABASE"),
-        "--batch",
-        "--raw",
-        "--default-character-set=utf8mb4",
-        "--connect-timeout=20",
-    ]
-    if quick:
-        cmd.append("--quick")
-    return cmd
+    cursorclass = SSDictCursor if quick else DictCursor
+    return pymysql.connect(
+        host=require_env("MYSQL_HOST"),
+        port=int(require_env("MYSQL_PORT")),
+        user=require_env("MYSQL_USER"),
+        password=require_env("MYSQL_PASSWORD"),
+        database=require_env("MYSQL_DATABASE"),
+        charset="utf8mb4",
+        connect_timeout=int(os.environ.get("MYSQL_CONNECT_TIMEOUT", "20")),
+        read_timeout=int(os.environ.get("MYSQL_READ_TIMEOUT", "3600")),
+        write_timeout=int(os.environ.get("MYSQL_WRITE_TIMEOUT", "3600")),
+        autocommit=True,
+        cursorclass=cursorclass,
+    )
 
 
 def mysql_label() -> str:
-    return "configured MySQL source"
+    host = os.environ.get("MYSQL_HOST", "<host>")
+    port = os.environ.get("MYSQL_PORT", "<port>")
+    database = os.environ.get("MYSQL_DATABASE", "<database>")
+    return f"{host}:{port}/{database}"
 
 
 def sql_literal(value: object) -> str:
@@ -49,29 +48,73 @@ def sql_literal(value: object) -> str:
     return "'" + text.replace("\\", "\\\\").replace("'", "''") + "'"
 
 
+def split_mysql_statements(sql: str) -> List[str]:
+    statements: List[str] = []
+    current: List[str] = []
+    quote: Optional[str] = None
+    index = 0
+
+    while index < len(sql):
+        char = sql[index]
+        current.append(char)
+
+        if quote:
+            if char == "\\" and quote != "`" and index + 1 < len(sql):
+                index += 1
+                current.append(sql[index])
+            elif char == quote:
+                quote = None
+        elif char in ("'", '"', "`"):
+            quote = char
+        elif char == ";":
+            statement = "".join(current[:-1]).strip()
+            if statement:
+                statements.append(statement)
+            current = []
+
+        index += 1
+
+    statement = "".join(current).strip()
+    if statement:
+        statements.append(statement)
+    return statements
+
+
+def mysql_value_to_string(value: object) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, dt.datetime):
+        return value.isoformat(sep=" ")
+    if isinstance(value, (dt.date, dt.time)):
+        return value.isoformat()
+    if isinstance(value, decimal.Decimal):
+        return str(value)
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    return str(value)
+
+
+def stringify_row(row: Dict[str, object]) -> Dict[str, str]:
+    return {key: mysql_value_to_string(value) for key, value in row.items()}
+
+
 def iter_mysql_dicts(sql: str, *, quick: bool = False) -> Iterator[Dict[str, str]]:
-    proc = subprocess.Popen(
-        mysql_cmd(quick=quick),
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=mysql_env(),
-    )
-    assert proc.stdin is not None
-    assert proc.stdout is not None
-    assert proc.stderr is not None
-    proc.stdin.write(sql)
-    proc.stdin.close()
+    statements = split_mysql_statements(sql)
+    if not statements:
+        return
 
-    reader = csv.DictReader(proc.stdout, delimiter="\t")
-    for row in reader:
-        yield row
+    with mysql_connection(quick=quick) as connection:
+        for statement in statements[:-1]:
+            with connection.cursor() as cursor:
+                cursor.execute(statement)
+                cursor.fetchall()
 
-    stderr = proc.stderr.read()
-    return_code = proc.wait()
-    if return_code != 0:
-        raise RuntimeError(stderr.strip() or f"mysql exited with status {return_code}")
+        with connection.cursor() as cursor:
+            cursor.execute(statements[-1])
+            if cursor.description is None:
+                return
+            for row in cursor:
+                yield stringify_row(row)
 
 
 def fetch_mysql_dicts(sql: str) -> List[Dict[str, str]]:

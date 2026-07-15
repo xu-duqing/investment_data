@@ -20,15 +20,12 @@ The old Dolt data source is no longer used.
 Install system tools:
 
 ```bash
-mysql --version
 git --version
 ```
 
-On macOS, install the MySQL client if needed:
-
-```bash
-brew install mysql
-```
+The exporter uses `PyMySQL`, so a system `mysql` client is not required. This
+keeps the dump script runnable on older macOS versions where the Homebrew MySQL
+client is not available.
 
 Install Python dependencies:
 
@@ -42,8 +39,23 @@ pip install -r requirements.txt
 If the virtual environment already exists, activate it and rerun
 `pip install -r requirements.txt` after dependency changes.
 
-When `.venv/bin/python` exists, `dump_qlib_bin.sh` uses it automatically. You
-can override this with `PYTHON_BIN=/path/to/python`.
+Prepare Qlib in its own virtual environment. The dump script uses Qlib source
+from `../qlib` by default and needs its Cython extensions compiled in place:
+
+```bash
+cd ../qlib
+python3 -m venv --system-site-packages .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r ../investment_data/requirements.txt
+python -m pip install -e ".[test]"
+python -m pip install -r scripts/data_collector/yahoo/requirements.txt
+python setup.py build_ext --inplace
+```
+
+When `../qlib/.venv/bin/python` exists, `dump_qlib_bin.sh` uses it first. It
+falls back to this repository's `.venv/bin/python`, then `python3`. You can
+override this with `PYTHON_BIN=/path/to/python`.
 
 ## Run
 
@@ -95,6 +107,8 @@ Run syntax checks:
 ```bash
 bash -n dump_qlib_bin.sh
 python -m py_compile qlib/*.py tushare/*.py
+python -c "import pymysql, setuptools_scm"
+PYTHONPATH=../qlib:../qlib/scripts ../qlib/.venv/bin/python -c "import qlib; from qlib.data._libs.rolling import rolling_slope; from qlib.data._libs.expanding import expanding_slope; from data_collector.yahoo import collector"
 ```
 
 Run a small MySQL export sample:
