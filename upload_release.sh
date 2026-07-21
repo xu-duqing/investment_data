@@ -16,8 +16,14 @@ RELEASE_TIMEZONE="${RELEASE_TIMEZONE:-Asia/Shanghai}"
 DATE="${DATE:-$(TZ="${RELEASE_TIMEZONE}" date +%F)}"
 ASSET_NAME="${ASSET_NAME:-qlib_bin.tar.gz}"
 BODY="${BODY:-Daily Qlib data update}"
-FILE_PATH="${FILE_PATH:-${SCRIPT_DIR}/output/${ASSET_NAME}}"
+OUTPUT_DIR="${OUTPUT_DIR:-${SCRIPT_DIR}/output}"
+FILE_PATH="${FILE_PATH:-${OUTPUT_DIR}/${ASSET_NAME}}"
 LOCK_FILE="${UPLOAD_RELEASE_LOCK_FILE:-/tmp/investment_data_upload_release.lock}"
+CLEAN_OUTPUT_AFTER_UPLOAD="${CLEAN_OUTPUT_AFTER_UPLOAD:-1}"
+REQUEST_MAX_RETRIES="${REQUEST_MAX_RETRIES:-8}"
+REQUEST_RETRY_BASE_DELAY="${REQUEST_RETRY_BASE_DELAY:-15}"
+REQUEST_RETRY_MAX_DELAY="${REQUEST_RETRY_MAX_DELAY:-180}"
+RESPONSE_LOG_BYTES="${RESPONSE_LOG_BYTES:-4000}"
 
 if [[ ! -s "${FILE_PATH}" ]]; then
     echo "Error: archive not found or empty: ${FILE_PATH}" >&2
@@ -56,13 +62,64 @@ AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 ACCEPT_HEADER="Accept: application/vnd.github+json"
 VERSION_HEADER="X-GitHub-Api-Version: ${API_VERSION}"
 
-request_status() {
-    curl -sS --retry 3 --retry-delay 10 \
+print_response_excerpt() {
+    if [[ ! -s "${RESPONSE_FILE}" ]]; then
+        return 0
+    fi
+    python3 - "${RESPONSE_FILE}" "${RESPONSE_LOG_BYTES}" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+limit = int(sys.argv[2])
+data = path.read_bytes()
+snippet = data[:limit]
+sys.stderr.buffer.write(snippet)
+if len(data) > limit:
+    sys.stderr.write(f"\n... [truncated {len(data) - limit} bytes]\n")
+elif data and not data.endswith(b"\n"):
+    sys.stderr.write("\n")
+PY
+}
+
+is_retryable_status() {
+    local status="$1"
+    case "${status}" in
+        000|408|409|425|429|5??) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+request_status_once() {
+    local status
+    if ! status="$(curl -sS --connect-timeout 30 --max-time 300 \
         -o "${RESPONSE_FILE}" -w "%{http_code}" \
         -H "${AUTH_HEADER}" \
         -H "${ACCEPT_HEADER}" \
         -H "${VERSION_HEADER}" \
-        "$@"
+        "$@")"; then
+        status="000"
+    fi
+    printf '%s' "${status}"
+}
+
+request_status() {
+    local attempt status delay
+    for ((attempt = 1; attempt <= REQUEST_MAX_RETRIES; attempt++)); do
+        status="$(request_status_once "$@")"
+        if ! is_retryable_status "${status}" || ((attempt == REQUEST_MAX_RETRIES)); then
+            printf '%s' "${status}"
+            return 0
+        fi
+
+        delay=$((REQUEST_RETRY_BASE_DELAY * attempt))
+        if ((delay > REQUEST_RETRY_MAX_DELAY)); then
+            delay="${REQUEST_RETRY_MAX_DELAY}"
+        fi
+        echo "GitHub API request returned HTTP ${status}; retrying in ${delay}s (${attempt}/${REQUEST_MAX_RETRIES})..." >&2
+        print_response_excerpt
+        sleep "${delay}"
+    done
 }
 
 HTTP_CODE="$(request_status "${API}/releases/tags/${DATE}")"
@@ -83,14 +140,14 @@ case "${HTTP_CODE}" in
             "${API}/releases")"
         if [[ "${HTTP_CODE}" != "201" ]]; then
             echo "Error: unable to create release ${DATE} (HTTP ${HTTP_CODE})." >&2
-            cat "${RESPONSE_FILE}" >&2
+            print_response_excerpt
             exit 1
         fi
         RELEASE_ID="$(jq -er '.id' "${RESPONSE_FILE}")"
         ;;
     *)
         echo "Error: unable to fetch release ${DATE} (HTTP ${HTTP_CODE})." >&2
-        cat "${RESPONSE_FILE}" >&2
+        print_response_excerpt
         exit 1
         ;;
 esac
@@ -100,7 +157,7 @@ get_asset_id() {
     status="$(request_status "${API}/releases/${RELEASE_ID}/assets")"
     if [[ "${status}" != "200" ]]; then
         echo "Error: unable to list release assets (HTTP ${status})." >&2
-        cat "${RESPONSE_FILE}" >&2
+        print_response_excerpt
         return 1
     fi
     jq -r --arg name "${ASSET_NAME}" \
@@ -114,9 +171,44 @@ delete_asset() {
     status="$(request_status -X DELETE "${API}/releases/assets/${asset_id}")"
     if [[ "${status}" != "204" ]]; then
         echo "Error: unable to delete existing asset (HTTP ${status})." >&2
-        cat "${RESPONSE_FILE}" >&2
+        print_response_excerpt
         return 1
     fi
+}
+
+cleanup_output_dir() {
+    if [[ "${CLEAN_OUTPUT_AFTER_UPLOAD}" != "1" ]]; then
+        return 0
+    fi
+
+    if [[ ! -d "${OUTPUT_DIR}" ]]; then
+        return 0
+    fi
+
+    local output_parent output_name output_abs output_real file_parent
+    output_parent="$(cd "$(dirname "${OUTPUT_DIR}")" && pwd -P)"
+    output_name="$(basename "${OUTPUT_DIR}")"
+    output_abs="${output_parent}/${output_name}"
+    output_real="$(cd "${OUTPUT_DIR}" && pwd -P)"
+    file_parent="$(cd "$(dirname "${FILE_PATH}")" && pwd -P)"
+
+    if [[ "${file_parent}" != "${output_real}" ]]; then
+        echo "Skipping output cleanup; uploaded file is outside OUTPUT_DIR: ${FILE_PATH}"
+        return 0
+    fi
+
+    if [[ "${output_name}" != "output" ]]; then
+        echo "Skipping output cleanup; unexpected OUTPUT_DIR name: ${output_abs}"
+        return 0
+    fi
+
+    if [[ -z "${output_abs}" || "${output_abs}" == "/" || "${output_abs}" == "${SCRIPT_DIR}" ]]; then
+        echo "Refusing to delete unsafe OUTPUT_DIR: ${output_abs}" >&2
+        return 1
+    fi
+
+    rm -rf -- "${output_abs}"
+    echo "Deleted output directory: ${output_abs}"
 }
 
 delete_asset "$(get_asset_id)"
@@ -127,7 +219,7 @@ MAX_RETRIES="${MAX_RETRIES:-3}"
 
 for ((attempt = 1; attempt <= MAX_RETRIES; attempt++)); do
     echo "Upload attempt ${attempt}/${MAX_RETRIES}..."
-    if ! HTTP_CODE="$(curl -sS \
+    if ! HTTP_CODE="$(curl -sS --connect-timeout 30 --max-time 1800 \
         -o "${RESPONSE_FILE}" -w "%{http_code}" \
         -H "${AUTH_HEADER}" \
         -H "${ACCEPT_HEADER}" \
@@ -144,20 +236,20 @@ for ((attempt = 1; attempt <= MAX_RETRIES; attempt++)); do
     fi
 
     echo "Upload failed (HTTP ${HTTP_CODE})." >&2
-    cat "${RESPONSE_FILE}" >&2
+    print_response_excerpt
     if ((attempt == MAX_RETRIES)); then
         echo "Error: upload failed after ${MAX_RETRIES} attempts." >&2
         exit 1
     fi
 
     delete_asset "$(get_asset_id)"
-    sleep 30
+    sleep $((30 * attempt))
 done
 
 HTTP_CODE="$(request_status "${API}/releases/${RELEASE_ID}/assets")"
 if [[ "${HTTP_CODE}" != "200" ]]; then
     echo "Error: unable to verify release assets (HTTP ${HTTP_CODE})." >&2
-    cat "${RESPONSE_FILE}" >&2
+    print_response_excerpt
     exit 1
 fi
 
@@ -172,3 +264,4 @@ fi
 
 echo "Verified ${ASSET_NAME} (${UPLOADED_SIZE} bytes) in release ${DATE}."
 echo "https://github.com/${REPO}/releases/tag/${DATE}"
+cleanup_output_dir

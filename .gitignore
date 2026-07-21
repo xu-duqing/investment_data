@@ -6,3 +6,5 @@ __pycache__/
 qlib_build_*/
 qlib_bin.tar.gz
 output/
+.qlib_release_state/
+logs/

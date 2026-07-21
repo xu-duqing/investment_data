@@ -157,10 +157,38 @@ run_python "${INVESTMENT_DATA_DIR}/tushare/dump_day_calendar.py" "${QLIB_BIN_DIR
 
 if [ "${CHECK_FRESHNESS:-0}" = "1" ]; then
     source_max_date=$(mysql_query_scalar "SELECT DATE_FORMAT(MAX(trade_date), '%Y-%m-%d') FROM stock_daily")
-    expected_max_date=$(mysql_query_scalar "SELECT DATE_FORMAT(MAX(cal_date), '%Y-%m-%d') FROM trade_calendar WHERE exchange = '${MYSQL_EXCHANGE}' AND is_open = 1 AND cal_date <= CURRENT_DATE")
+    # stock_daily is available on a D+1 schedule. The release target should be
+    # the latest open trading day strictly before the release date (calendar D-1
+    # by exchange calendar), or an explicit QLIB_RELEASE_PREVIOUS_DAY override.
+    freshness_as_of_date="${QLIB_FRESHNESS_AS_OF_DATE:-${QLIB_RELEASE_DATE:-}}"
+    explicit_release_day="${QLIB_RELEASE_PREVIOUS_DAY:-}"
+    if [ -n "${explicit_release_day}" ]; then
+        case "${explicit_release_day}" in
+            [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+            *)
+                echo "Invalid QLIB_RELEASE_PREVIOUS_DAY: ${explicit_release_day}" >&2
+                exit 1
+                ;;
+        esac
+        expected_max_date=$(mysql_query_scalar "SELECT DATE_FORMAT(MAX(cal_date), '%Y-%m-%d') FROM trade_calendar WHERE exchange = '${MYSQL_EXCHANGE}' AND is_open = 1 AND cal_date <= '${explicit_release_day}'")
+        freshness_boundary="release target ${explicit_release_day}"
+    elif [ -n "${freshness_as_of_date}" ]; then
+        case "${freshness_as_of_date}" in
+            [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+            *)
+                echo "Invalid QLIB_FRESHNESS_AS_OF_DATE/QLIB_RELEASE_DATE: ${freshness_as_of_date}" >&2
+                exit 1
+                ;;
+        esac
+        expected_max_date=$(mysql_query_scalar "SELECT DATE_FORMAT(MAX(cal_date), '%Y-%m-%d') FROM trade_calendar WHERE exchange = '${MYSQL_EXCHANGE}' AND is_open = 1 AND cal_date < '${freshness_as_of_date}'")
+        freshness_boundary="release date ${freshness_as_of_date}"
+    else
+        expected_max_date=$(mysql_query_scalar "SELECT DATE_FORMAT(MAX(cal_date), '%Y-%m-%d') FROM trade_calendar WHERE exchange = '${MYSQL_EXCHANGE}' AND is_open = 1 AND cal_date < CURRENT_DATE")
+        freshness_boundary="CURRENT_DATE"
+    fi
     qlib_max_date=$(tail -n 1 "${QLIB_BIN_DIR}/calendars/day.txt")
 
-    echo "Expected latest trade date: ${expected_max_date}"
+    echo "Expected latest source trade date (D+1, ${freshness_boundary}): ${expected_max_date}"
     echo "MySQL source latest trade date: ${source_max_date}"
     echo "Qlib archive latest trade date: ${qlib_max_date}"
 
