@@ -7,6 +7,15 @@ trap 'rm -rf "${TMP_ROOT}"' EXIT
 
 MOCK_BIN="${TMP_ROOT}/bin"
 mkdir -p "${MOCK_BIN}"
+cat >"${MOCK_BIN}/python3" <<'SH'
+#!/usr/bin/env bash
+if [[ "$1" == */qlib/validate_release_archives.py ]]; then
+    printf '%s\n' "validated release archives" >&2
+    exit 0
+fi
+exec /usr/bin/python3 "$@"
+SH
+chmod +x "${MOCK_BIN}/python3"
 cat >"${MOCK_BIN}/curl" <<'PY'
 #!/usr/bin/env python3
 import json
@@ -69,7 +78,7 @@ assert_contains() {
 missing_output="${TMP_ROOT}/missing/output"
 mkdir -p "${missing_output}"
 printf 'main' >"${missing_output}/qlib_bin.tar.gz"
-if PATH="${MOCK_BIN}:${PATH}" GITHUB_TOKEN=test \
+if PATH="${MOCK_BIN}:${PATH}" PYTHON_BIN="${MOCK_BIN}/python3" GITHUB_TOKEN=test \
     OUTPUT_DIR="${missing_output}" CLEAN_OUTPUT_AFTER_UPLOAD=0 \
     MOCK_CURL_STATE="${TMP_ROOT}/missing-state.json" \
     MOCK_CURL_LOG="${TMP_ROOT}/missing-curl.log" \
@@ -91,7 +100,7 @@ printf 'daily-basic-archive' >"${success_output}/daily_basic_qlib_features.tar.g
 cat >"${TMP_ROOT}/success-state.json" <<'JSON'
 {"assets":[{"id":41,"name":"qlib_bin.tar.gz","size":1},{"id":42,"name":"daily_basic_qlib_features.tar.gz","size":1}]}
 JSON
-PATH="${MOCK_BIN}:${PATH}" GITHUB_TOKEN=test \
+PATH="${MOCK_BIN}:${PATH}" PYTHON_BIN="${MOCK_BIN}/python3" GITHUB_TOKEN=*** \
     OUTPUT_DIR="${success_output}" DATE=2026-07-22 \
     REQUEST_MAX_RETRIES=1 MAX_RETRIES=1 \
     MOCK_CURL_STATE="${TMP_ROOT}/success-state.json" \

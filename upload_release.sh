@@ -42,6 +42,13 @@ for file_path in "${FILE_PATHS[@]}"; do
     fi
 done
 
+PYTHON_BIN="${PYTHON_BIN:-${SCRIPT_DIR}/.venv/bin/python}"
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+    PYTHON_BIN="python3"
+fi
+"${PYTHON_BIN}" "${SCRIPT_DIR}/qlib/validate_release_archives.py" \
+    "${MAIN_FILE_PATH}" "${DAILY_BASIC_FILE_PATH}"
+
 TOKEN="${GITHUB_PAT:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
 if [[ -z "${TOKEN}" ]]; then
     echo "Error: GITHUB_PAT, GH_TOKEN, or GITHUB_TOKEN must be set." >&2

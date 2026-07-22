@@ -127,6 +127,42 @@ Symbols are mapped to `qlib_code` and `stock_code` through `stock_basic`.
 `limit_status` is not returned by Tushare's `daily_basic` endpoint and remains
 at the table default (or its existing value on an update).
 
+## Build and install daily-basic Qlib features
+
+Build the independently published Feature increment against the exact calendar
+of an existing `cn_data` provider:
+
+```bash
+DAILY_BASIC_BASE_PROVIDER=~/.qlib/qlib_data/cn_data \
+./dump_daily_basic_qlib_features.sh
+```
+
+This creates `./output/daily_basic_qlib_features.tar.gz`. The archive contains
+only the 15 approved daily-basic fields, a manifest, checksums, and a build
+report. It never contains calendars, instruments, OHLCV, amount, or vwap. The
+builder fails instead of truncating if MySQL `daily_basic` is newer than the
+base provider calendar.
+
+Install into a copy of `cn_data` first:
+
+```bash
+python qlib/install_feature_increment.py \
+  output/daily_basic_qlib_features.tar.gz \
+  --target-dir ~/.qlib/qlib_data/cn_data
+```
+
+Unknown same-name Feature files are never overwritten. To update a package
+previously installed by this installer, use `--replace-same-dataset`. Recovery
+and uninstall commands are:
+
+```bash
+python qlib/install_feature_increment.py --target-dir ~/.qlib/qlib_data/cn_data --recover
+python qlib/install_feature_increment.py --target-dir ~/.qlib/qlib_data/cn_data --uninstall daily_basic
+```
+
+`upload_release.sh` verifies that the main archive calendar SHA-256 equals the
+daily-basic manifest calendar SHA-256 before making any GitHub API request.
+
 Useful runtime options:
 
 ```bash
@@ -147,7 +183,9 @@ Run syntax checks:
 
 ```bash
 bash -n dump_qlib_bin.sh
+bash -n dump_daily_basic_qlib_features.sh upload_release.sh
 python -m py_compile qlib/*.py tushare/*.py
+python -m unittest discover -s tests -v
 python -c "import pymysql, setuptools_scm"
 PYTHONPATH=../qlib:../qlib/scripts ../qlib/.venv/bin/python -c "import qlib; from qlib.data._libs.rolling import rolling_slope; from qlib.data._libs.expanding import expanding_slope; from data_collector.yahoo import collector"
 ```
