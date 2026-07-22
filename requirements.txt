@@ -1,3 +1,4 @@
 pandas
 setuptools-scm
 PyMySQL
+requests

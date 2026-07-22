@@ -80,6 +80,7 @@ MYSQL_USER=<mysql-user>
 MYSQL_PASSWORD=<mysql-password>
 MYSQL_DATABASE=<mysql-database>
 MYSQL_EXCHANGE=SSE
+TUSHARE_TOKEN=<tushare-token>
 ```
 
 Then run:
@@ -87,6 +88,26 @@ Then run:
 ```bash
 ./dump_qlib_bin.sh
 ```
+
+## Sync Tushare daily indicators
+
+Sync Tushare's `daily_basic` endpoint into the MySQL `daily_basic` table:
+
+```bash
+python tushare/sync_daily_basic.py
+```
+
+By default, the script uses the latest open trading day before today from
+`trade_calendar`. To backfill or rerun a specific day, pass an explicit date;
+the write is idempotent through the table's `(ts_code, trade_date)` unique key:
+
+```bash
+python tushare/sync_daily_basic.py --trade-date 2026-07-20
+```
+
+Symbols are mapped to `qlib_code` and `stock_code` through `stock_basic`.
+`limit_status` is not returned by Tushare's `daily_basic` endpoint and remains
+at the table default (or its existing value on an update).
 
 Useful runtime options:
 

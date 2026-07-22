@@ -1,7 +1,8 @@
+import csv
 import datetime as dt
 import decimal
 import os
-from typing import Dict, Iterable, Iterator, List, Optional
+from typing import Dict, Iterable, Iterator, List, Optional, Sequence
 
 
 def require_env(name: str) -> str:
@@ -11,7 +12,7 @@ def require_env(name: str) -> str:
     return value
 
 
-def mysql_connection(*, quick: bool = False):
+def mysql_connection(*, quick: bool = False, autocommit: bool = True):
     try:
         import pymysql
         from pymysql.cursors import DictCursor, SSDictCursor
@@ -29,7 +30,7 @@ def mysql_connection(*, quick: bool = False):
         connect_timeout=int(os.environ.get("MYSQL_CONNECT_TIMEOUT", "20")),
         read_timeout=int(os.environ.get("MYSQL_READ_TIMEOUT", "3600")),
         write_timeout=int(os.environ.get("MYSQL_WRITE_TIMEOUT", "3600")),
-        autocommit=True,
+        autocommit=autocommit,
         cursorclass=cursorclass,
     )
 
@@ -98,7 +99,12 @@ def stringify_row(row: Dict[str, object]) -> Dict[str, str]:
     return {key: mysql_value_to_string(value) for key, value in row.items()}
 
 
-def iter_mysql_dicts(sql: str, *, quick: bool = False) -> Iterator[Dict[str, str]]:
+def iter_mysql_dicts(
+    sql: str,
+    *,
+    quick: bool = False,
+    params: Optional[Sequence[object]] = None,
+) -> Iterator[Dict[str, str]]:
     statements = split_mysql_statements(sql)
     if not statements:
         return
@@ -110,19 +116,23 @@ def iter_mysql_dicts(sql: str, *, quick: bool = False) -> Iterator[Dict[str, str
                 cursor.fetchall()
 
         with connection.cursor() as cursor:
-            cursor.execute(statements[-1])
+            cursor.execute(statements[-1], params)
             if cursor.description is None:
                 return
             for row in cursor:
                 yield stringify_row(row)
 
 
-def fetch_mysql_dicts(sql: str) -> List[Dict[str, str]]:
-    return list(iter_mysql_dicts(sql))
+def fetch_mysql_dicts(sql: str, params: Optional[Sequence[object]] = None) -> List[Dict[str, str]]:
+    return list(iter_mysql_dicts(sql, params=params))
 
 
-def fetch_one_value(sql: str, column: Optional[str] = None) -> Optional[str]:
-    rows = fetch_mysql_dicts(sql)
+def fetch_one_value(
+    sql: str,
+    column: Optional[str] = None,
+    params: Optional[Sequence[object]] = None,
+) -> Optional[str]:
+    rows = fetch_mysql_dicts(sql, params=params)
     if not rows:
         return None
     if column is None:
