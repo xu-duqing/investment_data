@@ -163,6 +163,12 @@ python qlib/install_feature_increment.py --target-dir ~/.qlib/qlib_data/cn_data 
 `upload_release.sh` verifies that the main archive calendar SHA-256 equals the
 daily-basic manifest calendar SHA-256 before making any GitHub API request.
 
+The scheduled release wrapper is versioned at
+`scripts/check_open_dump_upload_qlib.sh`; Hermes runs its installed copy from
+`~/.hermes/scripts/`. On an open trading day it builds the main archive first,
+derives daily-basic features from that exact provider/calendar, then validates
+and uploads both assets as one release transaction.
+
 Useful runtime options:
 
 ```bash
