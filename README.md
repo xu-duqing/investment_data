@@ -67,8 +67,26 @@ From the repository root:
 
 The script clones Qlib into the parent working directory by default and writes
 the generated archive to `./output/qlib_bin.tar.gz`.
-After `upload_release.sh` successfully verifies the uploaded release asset, it
-deletes `./output` by default. Set `CLEAN_OUTPUT_AFTER_UPLOAD=0` to keep it.
+
+`upload_release.sh` publishes both `./output/qlib_bin.tar.gz` and
+`./output/daily_basic_qlib_features.tar.gz` to the same GitHub Release. It
+checks that both archives exist and are non-empty before creating or changing a
+release, replaces same-named assets, and verifies both uploaded sizes. After
+both assets pass verification, it deletes `./output` by default. Set
+`CLEAN_OUTPUT_AFTER_UPLOAD=0` to keep it.
+
+The upload paths and names can be overridden independently:
+
+```bash
+MAIN_ASSET_NAME=qlib_bin.tar.gz
+MAIN_FILE_PATH=./output/qlib_bin.tar.gz
+DAILY_BASIC_ASSET_NAME=daily_basic_qlib_features.tar.gz
+DAILY_BASIC_FILE_PATH=./output/daily_basic_qlib_features.tar.gz
+./upload_release.sh
+```
+
+The legacy `ASSET_NAME` and `FILE_PATH` variables remain aliases for the main
+archive only. Supplying them does not disable the required daily-basic asset.
 
 Configure the MySQL connection in a local `.env` file before running the export.
 The file is ignored by git; do not commit real credentials or internal endpoints.

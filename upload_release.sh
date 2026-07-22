@@ -14,10 +14,12 @@ fi
 REPO="${REPO:-${GITHUB_REPOSITORY:-xu-duqing/investment_data}}"
 RELEASE_TIMEZONE="${RELEASE_TIMEZONE:-Asia/Shanghai}"
 DATE="${DATE:-$(TZ="${RELEASE_TIMEZONE}" date +%F)}"
-ASSET_NAME="${ASSET_NAME:-qlib_bin.tar.gz}"
+MAIN_ASSET_NAME="${MAIN_ASSET_NAME:-${ASSET_NAME:-qlib_bin.tar.gz}}"
+DAILY_BASIC_ASSET_NAME="${DAILY_BASIC_ASSET_NAME:-daily_basic_qlib_features.tar.gz}"
 BODY="${BODY:-Daily Qlib data update}"
 OUTPUT_DIR="${OUTPUT_DIR:-${SCRIPT_DIR}/output}"
-FILE_PATH="${FILE_PATH:-${OUTPUT_DIR}/${ASSET_NAME}}"
+MAIN_FILE_PATH="${MAIN_FILE_PATH:-${FILE_PATH:-${OUTPUT_DIR}/${MAIN_ASSET_NAME}}}"
+DAILY_BASIC_FILE_PATH="${DAILY_BASIC_FILE_PATH:-${OUTPUT_DIR}/${DAILY_BASIC_ASSET_NAME}}"
 LOCK_FILE="${UPLOAD_RELEASE_LOCK_FILE:-/tmp/investment_data_upload_release.lock}"
 CLEAN_OUTPUT_AFTER_UPLOAD="${CLEAN_OUTPUT_AFTER_UPLOAD:-1}"
 REQUEST_MAX_RETRIES="${REQUEST_MAX_RETRIES:-8}"
@@ -25,10 +27,20 @@ REQUEST_RETRY_BASE_DELAY="${REQUEST_RETRY_BASE_DELAY:-15}"
 REQUEST_RETRY_MAX_DELAY="${REQUEST_RETRY_MAX_DELAY:-180}"
 RESPONSE_LOG_BYTES="${RESPONSE_LOG_BYTES:-4000}"
 
-if [[ ! -s "${FILE_PATH}" ]]; then
-    echo "Error: archive not found or empty: ${FILE_PATH}" >&2
+ASSET_NAMES=("${MAIN_ASSET_NAME}" "${DAILY_BASIC_ASSET_NAME}")
+FILE_PATHS=("${MAIN_FILE_PATH}" "${DAILY_BASIC_FILE_PATH}")
+
+if [[ "${MAIN_ASSET_NAME}" == "${DAILY_BASIC_ASSET_NAME}" ]]; then
+    echo "Error: release asset names must be different: ${MAIN_ASSET_NAME}" >&2
     exit 1
 fi
+
+for file_path in "${FILE_PATHS[@]}"; do
+    if [[ ! -s "${file_path}" ]]; then
+        echo "Error: archive not found or empty: ${file_path}" >&2
+        exit 1
+    fi
+done
 
 TOKEN="${GITHUB_PAT:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
 if [[ -z "${TOKEN}" ]]; then
@@ -153,6 +165,7 @@ case "${HTTP_CODE}" in
 esac
 
 get_asset_id() {
+    local asset_name="$1"
     local status
     status="$(request_status "${API}/releases/${RELEASE_ID}/assets")"
     if [[ "${status}" != "200" ]]; then
@@ -160,7 +173,7 @@ get_asset_id() {
         print_response_excerpt
         return 1
     fi
-    jq -r --arg name "${ASSET_NAME}" \
+    jq -r --arg name "${asset_name}" \
         'map(select(.name == $name))[0].id // empty' "${RESPONSE_FILE}"
 }
 
@@ -185,17 +198,18 @@ cleanup_output_dir() {
         return 0
     fi
 
-    local output_parent output_name output_abs output_real file_parent
+    local output_parent output_name output_abs output_real file_path file_parent
     output_parent="$(cd "$(dirname "${OUTPUT_DIR}")" && pwd -P)"
     output_name="$(basename "${OUTPUT_DIR}")"
     output_abs="${output_parent}/${output_name}"
     output_real="$(cd "${OUTPUT_DIR}" && pwd -P)"
-    file_parent="$(cd "$(dirname "${FILE_PATH}")" && pwd -P)"
-
-    if [[ "${file_parent}" != "${output_real}" ]]; then
-        echo "Skipping output cleanup; uploaded file is outside OUTPUT_DIR: ${FILE_PATH}"
-        return 0
-    fi
+    for file_path in "${FILE_PATHS[@]}"; do
+        file_parent="$(cd "$(dirname "${file_path}")" && pwd -P)"
+        if [[ "${file_parent}" != "${output_real}" ]]; then
+            echo "Skipping output cleanup; uploaded file is outside OUTPUT_DIR: ${file_path}"
+            return 0
+        fi
+    done
 
     if [[ "${output_name}" != "output" ]]; then
         echo "Skipping output cleanup; unexpected OUTPUT_DIR name: ${output_abs}"
@@ -211,39 +225,49 @@ cleanup_output_dir() {
     echo "Deleted output directory: ${output_abs}"
 }
 
-delete_asset "$(get_asset_id)"
-
-ENCODED_ASSET_NAME="$(jq -rn --arg name "${ASSET_NAME}" '$name | @uri')"
-UPLOAD_URL="https://uploads.github.com/repos/${REPO}/releases/${RELEASE_ID}/assets?name=${ENCODED_ASSET_NAME}"
 MAX_RETRIES="${MAX_RETRIES:-3}"
 
-for ((attempt = 1; attempt <= MAX_RETRIES; attempt++)); do
-    echo "Upload attempt ${attempt}/${MAX_RETRIES}..."
-    if ! HTTP_CODE="$(curl -sS --connect-timeout 30 --max-time 1800 \
-        -o "${RESPONSE_FILE}" -w "%{http_code}" \
-        -H "${AUTH_HEADER}" \
-        -H "${ACCEPT_HEADER}" \
-        -H "${VERSION_HEADER}" \
-        -H "Content-Type: application/gzip" \
-        --data-binary "@${FILE_PATH}" \
-        "${UPLOAD_URL}")"; then
-        HTTP_CODE="000"
-    fi
+upload_asset() {
+    local asset_name="$1"
+    local file_path="$2"
+    local encoded_asset_name upload_url attempt http_code
 
-    if [[ "${HTTP_CODE}" =~ ^2[0-9][0-9]$ ]]; then
-        echo "Upload succeeded (HTTP ${HTTP_CODE})."
-        break
-    fi
+    delete_asset "$(get_asset_id "${asset_name}")"
+    encoded_asset_name="$(jq -rn --arg name "${asset_name}" '$name | @uri')"
+    upload_url="https://uploads.github.com/repos/${REPO}/releases/${RELEASE_ID}/assets?name=${encoded_asset_name}"
 
-    echo "Upload failed (HTTP ${HTTP_CODE})." >&2
-    print_response_excerpt
-    if ((attempt == MAX_RETRIES)); then
-        echo "Error: upload failed after ${MAX_RETRIES} attempts." >&2
-        exit 1
-    fi
+    for ((attempt = 1; attempt <= MAX_RETRIES; attempt++)); do
+        echo "Uploading ${asset_name}: attempt ${attempt}/${MAX_RETRIES}..."
+        if ! http_code="$(curl -sS --connect-timeout 30 --max-time 1800 \
+            -o "${RESPONSE_FILE}" -w "%{http_code}" \
+            -H "${AUTH_HEADER}" \
+            -H "${ACCEPT_HEADER}" \
+            -H "${VERSION_HEADER}" \
+            -H "Content-Type: application/gzip" \
+            --data-binary "@${file_path}" \
+            "${upload_url}")"; then
+            http_code="000"
+        fi
 
-    delete_asset "$(get_asset_id)"
-    sleep $((30 * attempt))
+        if [[ "${http_code}" =~ ^2[0-9][0-9]$ ]]; then
+            echo "Upload succeeded for ${asset_name} (HTTP ${http_code})."
+            return 0
+        fi
+
+        echo "Upload failed for ${asset_name} (HTTP ${http_code})." >&2
+        print_response_excerpt
+        if ((attempt == MAX_RETRIES)); then
+            echo "Error: ${asset_name} upload failed after ${MAX_RETRIES} attempts." >&2
+            return 1
+        fi
+
+        delete_asset "$(get_asset_id "${asset_name}")"
+        sleep $((30 * attempt))
+    done
+}
+
+for index in "${!ASSET_NAMES[@]}"; do
+    upload_asset "${ASSET_NAMES[${index}]}" "${FILE_PATHS[${index}]}"
 done
 
 HTTP_CODE="$(request_status "${API}/releases/${RELEASE_ID}/assets")"
@@ -253,15 +277,19 @@ if [[ "${HTTP_CODE}" != "200" ]]; then
     exit 1
 fi
 
-UPLOADED_SIZE="$(jq -r --arg name "${ASSET_NAME}" \
-    'map(select(.name == $name))[0].size // empty' "${RESPONSE_FILE}")"
-LOCAL_SIZE="$(stat -c%s "${FILE_PATH}" 2>/dev/null || stat -f%z "${FILE_PATH}")"
+for index in "${!ASSET_NAMES[@]}"; do
+    asset_name="${ASSET_NAMES[${index}]}"
+    file_path="${FILE_PATHS[${index}]}"
+    uploaded_size="$(jq -r --arg name "${asset_name}" \
+        'map(select(.name == $name))[0].size // empty' "${RESPONSE_FILE}")"
+    local_size="$(stat -c%s "${file_path}" 2>/dev/null || stat -f%z "${file_path}")"
 
-if [[ -z "${UPLOADED_SIZE}" || "${UPLOADED_SIZE}" != "${LOCAL_SIZE}" ]]; then
-    echo "Error: size mismatch; local=${LOCAL_SIZE}, uploaded=${UPLOADED_SIZE:-missing}." >&2
-    exit 1
-fi
+    if [[ -z "${uploaded_size}" || "${uploaded_size}" != "${local_size}" ]]; then
+        echo "Error: ${asset_name} size mismatch; local=${local_size}, uploaded=${uploaded_size:-missing}." >&2
+        exit 1
+    fi
+    echo "Verified ${asset_name} (${uploaded_size} bytes) in release ${DATE}."
+done
 
-echo "Verified ${ASSET_NAME} (${UPLOADED_SIZE} bytes) in release ${DATE}."
 echo "https://github.com/${REPO}/releases/tag/${DATE}"
 cleanup_output_dir
