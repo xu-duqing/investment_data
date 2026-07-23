@@ -71,19 +71,21 @@ def load_dotenv(path: Path) -> None:
         os.environ.setdefault(name, value)
 
 
-def latest_open_trade_date(exchange: str, before: dt.date) -> dt.date:
+def latest_open_trade_date(exchange: str, on_or_before: dt.date) -> dt.date:
     value = fetch_one_value(
         """
         SELECT DATE_FORMAT(MAX(cal_date), '%%Y-%%m-%%d')
         FROM trade_calendar
         WHERE exchange = %s
           AND is_open = 1
-          AND cal_date < %s
+          AND cal_date <= %s
         """,
-        params=(exchange, before),
+        params=(exchange, on_or_before),
     )
     if not value or value == "NULL":
-        raise RuntimeError(f"no open trade date found for exchange={exchange} before {before}")
+        raise RuntimeError(
+            f"no open trade date found for exchange={exchange} on or before {on_or_before}"
+        )
     return dt.date.fromisoformat(value)
 
 
@@ -275,7 +277,11 @@ def backfill_daily_basic(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Sync Tushare daily_basic data into MySQL")
-    parser.add_argument("--trade-date", type=parse_date, help="Trade date (YYYY-MM-DD); defaults to previous open day")
+    parser.add_argument(
+        "--trade-date",
+        type=parse_date,
+        help="Trade date (YYYY-MM-DD); defaults to the latest open day on or before today",
+    )
     parser.add_argument("--start-date", type=parse_date, help="Backfill start date (YYYY-MM-DD)")
     parser.add_argument("--end-date", type=parse_date, help="Backfill end date; defaults to latest open day")
     parser.add_argument("--skip-existing", action="store_true", help="Skip dates already present in daily_basic")
@@ -292,7 +298,7 @@ def main() -> None:
     if args.trade_date and args.start_date:
         raise SystemExit("--trade-date and --start-date cannot be used together")
     if args.start_date:
-        end_date = args.end_date or latest_open_trade_date(args.exchange, dt.date.today() + dt.timedelta(days=1))
+        end_date = args.end_date or latest_open_trade_date(args.exchange, dt.date.today())
         backfill_daily_basic(
             args.start_date,
             end_date,

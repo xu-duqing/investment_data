@@ -127,9 +127,9 @@ def dump_daily_basic_source(
         raise ValueError("max_workers must be at least 1")
     output_dir.mkdir(parents=True, exist_ok=True)
     source_min_date, source_max_date = source_date_bounds()
-    if end_date and source_max_date > end_date:
+    if end_date and source_max_date != end_date:
         raise RuntimeError(
-            f"daily_basic source max date {source_max_date} is after requested/base calendar end {end_date}"
+            f"daily_basic source max date {source_max_date} does not match requested/base calendar end {end_date}"
         )
     if start_date and start_date > source_max_date:
         raise RuntimeError(f"daily_basic start date {start_date} is after source max date {source_max_date}")

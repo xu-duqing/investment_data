@@ -37,7 +37,12 @@ class DumpDailyBasicSourceTest(unittest.TestCase):
 
     def test_export_rejects_source_newer_than_base_calendar(self):
         with mock.patch.object(module, "source_date_bounds", return_value=("2020-01-02", "2020-01-06")):
-            with self.assertRaisesRegex(RuntimeError, "after requested/base calendar"):
+            with self.assertRaisesRegex(RuntimeError, "does not match requested/base calendar"):
+                module.dump_daily_basic_source(Path("/tmp/not-created"), end_date="2020-01-03")
+
+    def test_export_rejects_source_older_than_same_day_calendar(self):
+        with mock.patch.object(module, "source_date_bounds", return_value=("2020-01-02", "2020-01-02")):
+            with self.assertRaisesRegex(RuntimeError, "does not match requested/base calendar"):
                 module.dump_daily_basic_source(Path("/tmp/not-created"), end_date="2020-01-03")
 
 

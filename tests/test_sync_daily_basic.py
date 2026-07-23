@@ -81,12 +81,13 @@ class SyncDailyBasicTest(unittest.TestCase):
         self.assertEqual(values[0][4], 10.5)
         self.assertEqual(missing, ["999999.SH"])
 
-    def test_latest_open_trade_date_uses_parameterized_query(self):
+    def test_latest_open_trade_date_includes_requested_date(self):
         with mock.patch.object(MODULE, "fetch_one_value", return_value="2026-07-20") as fetch:
             result = MODULE.latest_open_trade_date("SSE", dt.date(2026, 7, 21))
 
         self.assertEqual(result, dt.date(2026, 7, 20))
         self.assertEqual(fetch.call_args.kwargs["params"], ("SSE", dt.date(2026, 7, 21)))
+        self.assertIn("cal_date <= %s", fetch.call_args.args[0])
 
     def test_backfill_skips_existing_dates(self):
         dates = [dt.date(2026, 7, 17), dt.date(2026, 7, 20)]

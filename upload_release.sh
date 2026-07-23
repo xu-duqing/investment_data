@@ -13,7 +13,11 @@ fi
 
 REPO="${REPO:-${GITHUB_REPOSITORY:-xu-duqing/investment_data}}"
 RELEASE_TIMEZONE="${RELEASE_TIMEZONE:-Asia/Shanghai}"
-DATE="${DATE:-$(TZ="${RELEASE_TIMEZONE}" date +%F)}"
+DATE="${DATE:-${QLIB_RELEASE_TRADE_DATE:-$(TZ="${RELEASE_TIMEZONE}" date +%F)}}"
+if [[ -n "${QLIB_RELEASE_TRADE_DATE:-}" && "${DATE}" != "${QLIB_RELEASE_TRADE_DATE}" ]]; then
+    echo "Error: DATE (${DATE}) must match QLIB_RELEASE_TRADE_DATE (${QLIB_RELEASE_TRADE_DATE})." >&2
+    exit 1
+fi
 MAIN_ASSET_NAME="${MAIN_ASSET_NAME:-${ASSET_NAME:-qlib_bin.tar.gz}}"
 DAILY_BASIC_ASSET_NAME="${DAILY_BASIC_ASSET_NAME:-daily_basic_qlib_features.tar.gz}"
 BODY="${BODY:-Daily Qlib data update}"

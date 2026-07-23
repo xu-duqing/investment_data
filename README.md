@@ -115,8 +115,9 @@ Sync Tushare's `daily_basic` endpoint into the MySQL `daily_basic` table:
 python tushare/sync_daily_basic.py
 ```
 
-By default, the script uses the latest open trading day before today from
-`trade_calendar`. To backfill or rerun a specific day, pass an explicit date;
+By default, the script uses the latest open trading day on or before today from
+`trade_calendar`, so an after-close run syncs the current trading day. To
+backfill or rerun a specific day, pass an explicit date;
 the write is idempotent through the table's `(ts_code, trade_date)` unique key:
 
 ```bash
@@ -165,9 +166,11 @@ daily-basic manifest calendar SHA-256 before making any GitHub API request.
 
 The scheduled release wrapper is versioned at
 `scripts/check_open_dump_upload_qlib.sh`; Hermes runs its installed copy from
-`~/.hermes/scripts/`. On an open trading day it builds the main archive first,
+`~/.hermes/scripts/`. It runs after the same-day indicator sync. On an open
+trading day it builds the main archive first,
 derives daily-basic features from that exact provider/calendar, then validates
-and uploads both assets as one release transaction.
+and uploads both assets as one release transaction. Freshness checks require
+both `stock_daily` and `daily_basic` to reach that same trading date.
 
 Useful runtime options:
 
