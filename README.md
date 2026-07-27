@@ -5,6 +5,46 @@
 
 本项目从配置好的 MySQL 数据库读取中国市场行情、复权因子、交易日历、证券信息、指数成分权重和 Tushare `daily_basic` 指标，生成可供 Microsoft Qlib 使用的二进制数据。
 
+## 使用 deep-alpha 下载和更新数据
+
+[deep-alpha](https://github.com/xu-duqing/deep-alpha) 是配套的 Qlib 离线数据命令行工具，可用于下载、检查和更新本项目发布的数据。
+
+### 下载日线行情
+
+首次使用时，先安装基础行情数据：
+
+```bash
+deep-alpha download
+```
+
+### 下载每日指标
+
+基础行情安装完成后，再安装 `daily-basic` 增量包：
+
+```bash
+deep-alpha download --dataset daily-basic
+```
+
+### 检查本地数据
+
+```bash
+deep-alpha info
+```
+
+### 更新数据
+
+更新基础行情：
+
+```bash
+deep-alpha update
+```
+
+更新 `daily-basic` 指标：
+
+```bash
+deep-alpha update --dataset daily-basic
+```
+
 每次正式发布包含两个相互兼容的文件：
 
 - `qlib_bin.tar.gz`：主 Qlib 数据包，包含交易日历、证券列表、行情 Feature 和指数成分。
@@ -12,10 +52,13 @@
 
 两个包使用完全相同的 Qlib 交易日历。发布脚本会在上传前验证日历 SHA-256，避免 Feature 日期偏移。
 
-> 本项目已经不再使用旧版 Dolt 数据源。当前导出流程以 MySQL 为数据源。
-
 ## 目录
 
+- [使用 deep-alpha 下载和更新数据](#使用-deep-alpha-下载和更新数据)
+  - [下载日线行情](#下载日线行情)
+  - [下载每日指标](#下载每日指标)
+  - [检查本地数据](#检查本地数据)
+  - [更新数据](#更新数据)
 - [快速使用](#快速使用)
   - [下载发布文件](#下载发布文件)
   - [安装主数据包](#安装主数据包)
