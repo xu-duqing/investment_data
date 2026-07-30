@@ -212,51 +212,6 @@ python qlib/install_feature_increment.py \
 
 如果已安装文件被其他程序修改，安装器会拒绝更新或卸载，避免误删用户数据。
 
-# 开发环境
-
-## 安装依赖
-
-系统需要 Git、Python 3 和常见的 POSIX 命令行工具。项目通过 PyMySQL 访问数据库，不要求安装 MySQL 命令行客户端。
-
-```bash
-git clone git@github.com:xu-duqing/investment_data.git
-cd investment_data
-
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-主要 Python 依赖包括：
-
-- `pandas`
-- `PyMySQL`
-- `requests`
-- `setuptools-scm`
-
-## 配置环境变量
-
-在仓库根目录创建本地 `.env`。该文件已被 Git 忽略，禁止提交真实凭据或内部地址。
-
-```bash
-MYSQL_HOST=<mysql-host>
-MYSQL_PORT=<mysql-port>
-MYSQL_USER=<mysql-user>
-MYSQL_PASSWORD=<mysql-password>
-MYSQL_DATABASE=<mysql-database>
-MYSQL_EXCHANGE=SSE
-TUSHARE_TOKEN=<tushare-token>
-GITHUB_PAT=<github-token>
-```
-
-说明：
-
-- `MYSQL_EXCHANGE` 默认是 `SSE`。
-- `TUSHARE_TOKEN` 用于同步 Tushare `daily_basic`。
-- `GITHUB_PAT`、`GH_TOKEN` 或 `GITHUB_TOKEN` 任意一个可用于发布脚本。
-- 不要在日志、文档或提交中输出密钥。
-
 ## 准备 Qlib 源码环境
 
 `dump_qlib_bin.sh` 默认使用相邻目录中的 `../qlib` 源码，并需要编译 Qlib 的 Cython 扩展：
@@ -403,86 +358,6 @@ python qlib/validate_release_archives.py \
 ./upload_release.sh
 ```
 
-发布脚本会：
-
-1. 检查两个文件均存在且非空。
-2. 验证主包交易日历与增量包 manifest 的日历 SHA-256 一致。
-3. 创建或复用当天 GitHub Release。
-4. 替换同名资产。
-5. 校验远端两个资产的大小。
-6. 全部成功后默认清理 `output/`。
-
-保留本地产物：
-
-```bash
-CLEAN_OUTPUT_AFTER_UPLOAD=0 ./upload_release.sh
-```
-
-使用明确的目标交易日发布时：
-
-```bash
-QLIB_RELEASE_TRADE_DATE=2026-07-23 ./upload_release.sh
-```
-
-如果同时设置了 `DATE`，它必须与 `QLIB_RELEASE_TRADE_DATE` 一致，否则脚本会拒绝发布，防止资产上传到错误标签。
-
-# 自动化定时任务
-
-当前生产自动化使用 Hermes cron：
-
-1. `tushare-daily-basic-trading-day-sync-email`
-   - 每天 18:00（Asia/Shanghai）运行。
-   - 检查当天是否为 SSE 交易日。
-   - 交易日同步当天 `daily_basic`，并发送成功或失败邮件。
-   - 非交易日跳过。
-
-2. `daily-qlib-release-after-close`
-   - 每天 19:35（Asia/Shanghai）运行。
-   - 仅在当天为交易日时启动。
-   - 等待 `stock_daily` 和 `daily_basic` 的最大交易日期都达到当天，默认最长等待 30 分钟。
-   - 完成主包和增量包构建、联合校验及上传。
-
-3. `daily-qlib-release-status-notify`
-   - 每 10 分钟检查后台发布状态。
-   - 对真实发布成功或失败发送通知。
-   - 非交易日和 dry-run 不发送成功通知。
-
-版本管理中的生产包装器：
-
-```text
-scripts/check_open_dump_upload_qlib.sh
-```
-
-Hermes 实际运行的安装副本：
-
-```text
-~/.hermes/scripts/check_open_dump_upload_qlib.sh
-```
-
-发布任务使用原子目录锁防止重复运行。运行状态与日志分别位于：
-
-```text
-.qlib_release_state/daily-qlib-release.status
-logs/qlib_release_<trade-date>_<timestamp>.log
-logs/qlib_release_handoff.log
-```
-
-# 数据结构与处理规则
-
-## 数据表
-
-主数据包读取以下 MySQL 表：
-
-- `stock_daily`：日行情。
-- `stock_adj_factor`：复权因子。
-- `stock_basic`：证券代码与 Qlib 代码映射。
-- `trade_calendar`：交易日历。
-- `index_weight`：指数成分权重。
-
-增量包读取：
-
-- `daily_basic`：换手率、估值、股本、市值和股息率等日频指标。
-
 ## 行情复权与归一化
 
 主行情构建不是简单保存原始价格：
@@ -499,25 +374,24 @@ logs/qlib_release_handoff.log
 
 当前增量包包含以下 15 个 Feature：
 
-- `turnover_rate`
-- `turnover_rate_f`
-- `volume_ratio`
-- `pe`
-- `pe_ttm`
-- `pb`
-- `ps`
-- `ps_ttm`
-- `dv_ratio`
-- `dv_ttm`
-- `total_share`
-- `float_share`
-- `free_share`
-- `total_mv`
-- `circ_mv`
 
-这些字段使用原字段名，在 Qlib 中通过 `$pe`、`$pb`、`$turnover_rate` 等方式查询。
-
-Tushare `daily_basic` 接口不提供 `limit_status`，因此该字段不包含在当前发布增量包中。
+字段名 | 中文名称 | 详细解释
+-- | -- | --
+turnover_rate | 换手率 (日) | 当日股票成交股本 / 流通股本 ×100%，衡量个股当日交易活跃度；数值越高筹码交换越频繁，短期波动通常更大
+turnover_rate_f | 自由流通换手率 | 当日成交量 / 自由流通股本（剔除大股东锁定、长期持股股份）计算的换手率，更真实反映散户 / 短线资金实际交易热度
+volume_ratio | 量比 | 当前累计成交量 / 过去 5 日同一时段平均成交量；>1 代表放量，<1 代表缩量，用于判断当日资金相较近期是否异动
+pe | 静态市盈率 | 总市值 ÷ 上一完整会计年度归母净利润；依赖去年全年业绩，若企业当期利润大幅波动会失真
+pe_ttm | 滚动市盈率 (TTM) | 总市值 ÷ 过去连续 12 个月归母净利润，市场最常用估值指标，平滑季度业绩波动，适合绝大多数盈利企业估值对比
+pb | 市净率 | 总市值 ÷ 归属母公司股东净资产；重资产、银行、周期股核心估值指标，PB<1 俗称破净，代表股价低于账面净资产
+ps | 静态市销率 | 总市值 ÷ 上一年度营业收入；适用于尚未盈利、亏损但营收增长的企业，避开净利润为负无法用 PE 估值的场景
+ps_ttm | 滚动市销率 (TTM) | 总市值 ÷ 过去 12 个月累计营业收入，动态反映营收估值，比静态 PS 时效性更强
+dv_ratio | 静态股息率 | 上一完整年度现金分红总额 / 当前总市值 ×100%，衡量去年全年分红带来的现金回报
+dv_ttm | 滚动股息率 (TTM) | 过去 12 个月实际现金分红总额 / 当前总市值，动态股息收益指标，不受财年划分影响
+total_share | 总股本 | 上市公司全部发行股份总数，包含限售股 + 流通股，计算总市值基础：total_share * 收盘价 = total_mv
+float_share | 流通股本 | 二级市场可正常交易的股份（不含首发锁定、定增锁定、大股东限售股份），用于计算常规换手率
+free_share | 自由流通股本 | 在流通股本基础上，剔除持股 5% 以上大股东、战略投资者长期持有的股份；仅统计真正可自由买卖的筹码，对应自由流通换手率
+total_mv | 总市值 | 总股本 × 当前股票收盘价，代表公司整体市场价值，大盘 / 小盘划分核心依据
+circ_mv | 流通市值 | 流通股本 × 当前股票收盘价，仅统计二级市场可交易股份的市值，短线资金博弈主要参考规模)
 
 ## 日历对齐
 
@@ -541,56 +415,6 @@ Qlib `.day.bin` 的第一个 float32 数值是数据在 Provider 全局交易日
 - 定时发布采用锁保护，已有存活进程时不会启动第二个任务。
 - 后台任务通过状态文件区分 `starting`、`running`、`completed`、`failed` 和 `skipped`。
 - `dry-run` 最终记录为 `skipped`，不会被通知器误报为正式发布成功。
-
-# 验证与测试
-
-运行完整单元测试：
-
-```bash
-source .venv/bin/activate
-python -m unittest discover -s tests -v
-```
-
-运行双资产发布模拟测试：
-
-```bash
-bash tests/test_upload_release.sh
-```
-
-Shell 和 Python 语法检查：
-
-```bash
-bash -n dump_qlib_bin.sh
-bash -n dump_daily_basic_qlib_features.sh upload_release.sh
-bash -n scripts/check_open_dump_upload_qlib.sh
-python -m py_compile qlib/*.py tushare/*.py tests/*.py
-```
-
-小规模 MySQL 行情导出：
-
-```bash
-mkdir -p /tmp/qlib_mysql_test/source
-QLIB_SOURCE_DIR=/tmp/qlib_mysql_test/source \
-QLIB_EXPORT_SYMBOL_LIMIT=2 \
-python qlib/dump_all_to_qlib_source.py
-```
-
-小规模指数成分导出：
-
-```bash
-mkdir -p /tmp/qlib_mysql_test/index
-QLIB_INDEX_DIR=/tmp/qlib_mysql_test/index \
-QLIB_INDEX_MARKETS=csi300 \
-python qlib/dump_index_weight.py
-```
-
-正式发布前至少确认：
-
-1. `stock_daily` 和 `daily_basic` 最大日期均为目标交易日。
-2. 主包日历最后日期与目标交易日一致。
-3. 两个归档日历 SHA-256 一致。
-4. 增量包不包含行情字段、日历或证券列表。
-5. 在临时 Provider 中安装后，可以通过一次 `qlib.init()` 同时查询 `$close` 和 `$pe`。
 
 # 贡献指南
 
