@@ -53,9 +53,16 @@ fi
 "${PYTHON_BIN}" "${SCRIPT_DIR}/qlib/validate_release_archives.py" \
     "${MAIN_FILE_PATH}" "${DAILY_BASIC_FILE_PATH}"
 
-TOKEN="${GITHUB_PAT:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
+TOKEN=""
+# Prefer the credential managed by gh because repository-local PATs can expire
+# while `gh auth status` remains healthy.  Fall back to environment variables
+# for unattended hosts that do not use gh's credential store.
+if command -v gh >/dev/null 2>&1; then
+    TOKEN="$(gh auth token 2>/dev/null || true)"
+fi
+TOKEN="${TOKEN:-${GITHUB_PAT:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}}"
 if [[ -z "${TOKEN}" ]]; then
-    echo "Error: GITHUB_PAT, GH_TOKEN, or GITHUB_TOKEN must be set." >&2
+    echo "Error: authenticate gh or set GITHUB_PAT, GH_TOKEN, or GITHUB_TOKEN." >&2
     exit 1
 fi
 
