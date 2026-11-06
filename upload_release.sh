@@ -20,10 +20,14 @@ if [[ -n "${QLIB_RELEASE_TRADE_DATE:-}" && "${DATE}" != "${QLIB_RELEASE_TRADE_DA
 fi
 MAIN_ASSET_NAME="${MAIN_ASSET_NAME:-${ASSET_NAME:-qlib_bin.tar.gz}}"
 DAILY_BASIC_ASSET_NAME="${DAILY_BASIC_ASSET_NAME:-daily_basic_qlib_features.tar.gz}"
+MARKET_DELTA_ASSET_NAME="${MARKET_DELTA_ASSET_NAME:-qlib_bin_delta.tar.gz}"
+DAILY_BASIC_DELTA_ASSET_NAME="${DAILY_BASIC_DELTA_ASSET_NAME:-daily_basic_qlib_features_delta.tar.gz}"
 BODY="${BODY:-Daily Qlib data update}"
 OUTPUT_DIR="${OUTPUT_DIR:-${SCRIPT_DIR}/output}"
 MAIN_FILE_PATH="${MAIN_FILE_PATH:-${FILE_PATH:-${OUTPUT_DIR}/${MAIN_ASSET_NAME}}}"
 DAILY_BASIC_FILE_PATH="${DAILY_BASIC_FILE_PATH:-${OUTPUT_DIR}/${DAILY_BASIC_ASSET_NAME}}"
+MARKET_DELTA_FILE_PATH="${MARKET_DELTA_FILE_PATH:-${OUTPUT_DIR}/${MARKET_DELTA_ASSET_NAME}}"
+DAILY_BASIC_DELTA_FILE_PATH="${DAILY_BASIC_DELTA_FILE_PATH:-${OUTPUT_DIR}/${DAILY_BASIC_DELTA_ASSET_NAME}}"
 LOCK_FILE="${UPLOAD_RELEASE_LOCK_FILE:-/tmp/investment_data_upload_release.lock}"
 CLEAN_OUTPUT_AFTER_UPLOAD="${CLEAN_OUTPUT_AFTER_UPLOAD:-1}"
 REQUEST_MAX_RETRIES="${REQUEST_MAX_RETRIES:-8}"
@@ -33,9 +37,16 @@ RESPONSE_LOG_BYTES="${RESPONSE_LOG_BYTES:-4000}"
 
 ASSET_NAMES=("${MAIN_ASSET_NAME}" "${DAILY_BASIC_ASSET_NAME}")
 FILE_PATHS=("${MAIN_FILE_PATH}" "${DAILY_BASIC_FILE_PATH}")
+if [[ "${TEMPORAL_DELTAS_AVAILABLE:-1}" == "1" ]]; then
+    ASSET_NAMES+=("${MARKET_DELTA_ASSET_NAME}" "${DAILY_BASIC_DELTA_ASSET_NAME}")
+    FILE_PATHS+=("${MARKET_DELTA_FILE_PATH}" "${DAILY_BASIC_DELTA_FILE_PATH}")
+elif [[ "${TEMPORAL_DELTAS_AVAILABLE:-1}" != "0" ]]; then
+    echo "Error: TEMPORAL_DELTAS_AVAILABLE must be 0 or 1." >&2
+    exit 1
+fi
 
-if [[ "${MAIN_ASSET_NAME}" == "${DAILY_BASIC_ASSET_NAME}" ]]; then
-    echo "Error: release asset names must be different: ${MAIN_ASSET_NAME}" >&2
+if [[ "$(printf '%s\n' "${ASSET_NAMES[@]}" | sort -u | wc -l | tr -d '[:space:]')" != "${#ASSET_NAMES[@]}" ]]; then
+    echo "Error: release asset names must be unique." >&2
     exit 1
 fi
 
@@ -50,8 +61,11 @@ PYTHON_BIN="${PYTHON_BIN:-${SCRIPT_DIR}/.venv/bin/python}"
 if [[ ! -x "${PYTHON_BIN}" ]]; then
     PYTHON_BIN="python3"
 fi
-"${PYTHON_BIN}" "${SCRIPT_DIR}/qlib/validate_release_archives.py" \
-    "${MAIN_FILE_PATH}" "${DAILY_BASIC_FILE_PATH}"
+validate_args=("${MAIN_FILE_PATH}" "${DAILY_BASIC_FILE_PATH}")
+if [[ "${TEMPORAL_DELTAS_AVAILABLE:-1}" == "1" ]]; then
+    validate_args+=("${MARKET_DELTA_FILE_PATH}" "${DAILY_BASIC_DELTA_FILE_PATH}" --release-tag "${DATE}")
+fi
+"${PYTHON_BIN}" "${SCRIPT_DIR}/qlib/validate_release_archives.py" "${validate_args[@]}"
 
 TOKEN=""
 # Prefer the credential managed by gh because repository-local PATs can expire
@@ -76,8 +90,8 @@ done
 if command -v flock >/dev/null 2>&1; then
     exec 9>"${LOCK_FILE}"
     if ! flock -n 9; then
-        echo "Another upload_release.sh is running; skipping release ${DATE}." >&2
-        exit 0
+        echo "Another upload_release.sh is running; refusing to advance release ${DATE}." >&2
+        exit 75
     fi
 else
     echo "Warning: flock is unavailable; continuing without an upload lock." >&2
@@ -283,6 +297,12 @@ upload_asset() {
         sleep $((30 * attempt))
     done
 }
+
+if [[ "${TEMPORAL_DELTAS_AVAILABLE:-1}" == "0" ]]; then
+    for stale_asset_name in "${MARKET_DELTA_ASSET_NAME}" "${DAILY_BASIC_DELTA_ASSET_NAME}"; do
+        delete_asset "$(get_asset_id "${stale_asset_name}")"
+    done
+fi
 
 for index in "${!ASSET_NAMES[@]}"; do
     upload_asset "${ASSET_NAMES[${index}]}" "${FILE_PATHS[${index}]}"

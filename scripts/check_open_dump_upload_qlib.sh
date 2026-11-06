@@ -88,6 +88,7 @@ run_worker() {
     export QLIB_RELEASE_PID
     daily_basic_base_root=""
     daily_basic_base=""
+    temporal_delta_state="${STATE_DIR}/release_state"
     cleanup_worker() {
         local status="$?"
         if [ -n "${daily_basic_base_root}" ]; then
@@ -116,7 +117,7 @@ run_worker() {
     if [ "${DRY_RUN:-0}" = "1" ]; then
         {
             echo "${trade_date} (${MYSQL_EXCHANGE}) was an open trading day; would run dump/upload. Log: ${run_log}"
-            echo "DRY_RUN=1; would run: ./dump_qlib_bin.sh && ./dump_daily_basic_qlib_features.sh && ./upload_release.sh"
+            echo "DRY_RUN=1; would run: full builds, temporal delta preparation, four/two asset upload, then baseline advance"
         } | tee -a "${run_log}"
         exit 0
     fi
@@ -168,8 +169,31 @@ run_worker() {
             DAILY_BASIC_BASE_PROVIDER="${daily_basic_base}" \
                 DAILY_BASIC_END_DATE="${trade_date}" \
                 bash ./dump_daily_basic_qlib_features.sh &&
+            if [ ! -f "${temporal_delta_state}/manifest.json" ]; then
+                echo "[$(iso_now)] Bootstrapping temporal delta baseline from the previous GitHub Release" &&
+                "${PYTHON_BIN}" qlib/release_state.py bootstrap-github \
+                    --state-dir "${temporal_delta_state}" \
+                    --repository "${REPO:-${GITHUB_REPOSITORY:-xu-duqing/investment_data}}" \
+                    --target-tag "${trade_date}"
+            fi &&
+            echo "[$(iso_now)] Preparing temporal delta archives from last successful release" &&
+            delta_result="$("${PYTHON_BIN}" qlib/release_state.py prepare \
+                --state-dir "${temporal_delta_state}" \
+                --main-archive "${INVESTMENT_DATA_DIR}/output/qlib_bin.tar.gz" \
+                --daily-basic-archive "${INVESTMENT_DATA_DIR}/output/daily_basic_qlib_features.tar.gz" \
+                --output-dir "${INVESTMENT_DATA_DIR}/output" \
+                --release-tag "${trade_date}")" &&
+            temporal_deltas_available="$(printf '%s' "${delta_result}" | "${PYTHON_BIN}" -c 'import json,sys; print(1 if json.load(sys.stdin)["available"] else 0)')" &&
+            echo "[$(iso_now)] Temporal delta preparation: ${delta_result}" &&
             echo "[$(iso_now)] Starting upload_release.sh" &&
-            ./upload_release.sh &&
+            TEMPORAL_DELTAS_AVAILABLE="${temporal_deltas_available}" CLEAN_OUTPUT_AFTER_UPLOAD=0 ./upload_release.sh &&
+            echo "[$(iso_now)] Advancing last-successful release baseline after remote verification" &&
+            "${PYTHON_BIN}" qlib/release_state.py advance \
+                --state-dir "${temporal_delta_state}" \
+                --main-archive "${INVESTMENT_DATA_DIR}/output/qlib_bin.tar.gz" \
+                --daily-basic-archive "${INVESTMENT_DATA_DIR}/output/daily_basic_qlib_features.tar.gz" \
+                --release-tag "${trade_date}" &&
+            if [ "${CLEAN_OUTPUT_AFTER_UPLOAD:-1}" = "1" ]; then rm -rf "${INVESTMENT_DATA_DIR}/output"; fi &&
             echo "[$(iso_now)] Completed main/daily_basic dump and upload for ${trade_date}"
     } >"${run_log}" 2>&1; then
         echo "Completed main/daily_basic qlib dump/upload for ${trade_date} (${MYSQL_EXCHANGE}). Log: ${run_log}"

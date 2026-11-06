@@ -44,7 +44,7 @@
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "package_type": "qlib_temporal_delta",
   "dataset": "market",
   "frequency": "day",
@@ -58,6 +58,9 @@
   "files": [
     {
       "path": "features/sh600000/close.day.bin",
+      "payload_path": "payloads.bin",
+      "payload_offset": 0,
+      "payload_size": 4,
       "operation": "append",
       "expected_old_size": 26004,
       "expected_old_sha256": "...",
@@ -79,6 +82,7 @@
 - 对已有文件执行追加前，必须验证旧文件大小和 SHA-256。
 - 应用后必须验证新文件大小和 SHA-256。
 - 增量归档包含完整 `checksums.sha256`，并限制归档路径、文件类型、成员数及解压大小。
+- schema v2 将 append/create 字节片段按 dataset 顺序聚合到单个 `payloads.bin`；每条记录用 `payload_offset` 和 `payload_size` 定位。共享 payload 的区间不得重叠，且片段大小必须符合 operation 的大小契约。校验和只需覆盖聚合 payload 一次。读取端继续兼容 schema v1 的逐文件 payload。
 - 两个增量包的 `base_release_tag`、`release_tag` 和目标日历指纹必须一致。
 
 ### 4.2 历史修正
@@ -107,18 +111,13 @@ market_delta/
 │   ├── csi300.txt
 │   ├── csi500.txt
 │   └── ...
-└── features/
-    ├── sh600000/
-    │   ├── open.day.append.bin
-    │   ├── close.day.append.bin
-    │   └── ...
-    └── ...
+└── payloads.bin
 ```
 
 ### 5.2 数据规则
 
 - `calendars/day.append.txt` 只包含基础日历之后新增的交易日，第一期通常只有一个日期。
-- 对已有证券，`*.day.append.bin` 只保存新增 float32 值，不重复保存 Qlib 起始 offset。
+- 对已有证券，`payloads.bin` 中对应片段只保存新增 float32 值，不重复保存 Qlib 起始 offset。
 - 当证券在新增日期没有值时，必须显式追加 `NaN`，不能跳过，否则各 Feature 长度会错位。
 - 对新上市证券，保存完整合法 `.day.bin`，首值为其在目标日历中的起始 offset。
 - instruments 和指数成分文件体积相对较小，可在增量包中携带目标版本完整文件并原子替换，避免设计难以验证的文本差分协议。
@@ -145,12 +144,7 @@ market_delta/
 daily_basic_delta/
 ├── manifest.json
 ├── checksums.sha256
-└── features/
-    ├── sh600000/
-    │   ├── pe.day.append.bin
-    │   ├── pb.day.append.bin
-    │   └── ...
-    └── ...
+└── payloads.bin
 ```
 
 ### 6.2 构建规则

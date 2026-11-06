@@ -52,6 +52,18 @@ class ValidateReleaseArchivesTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "calendar mismatch"):
                 module.validate_release_archives(main, increment)
 
+    def test_requires_both_temporal_delta_archives(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            main = root / "main.tar.gz"
+            increment = root / "increment.tar.gz"
+            delta = root / "delta.tar.gz"
+            for archive in (main, increment, delta):
+                with tarfile.open(archive, "w:gz"):
+                    pass
+            with self.assertRaisesRegex(ValueError, "both temporal delta archives"):
+                module.validate_release_archives(main, increment, delta, None)
+
 
 if __name__ == "__main__":
     unittest.main()

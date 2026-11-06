@@ -97,6 +97,8 @@ success_output="${TMP_ROOT}/success/output"
 mkdir -p "${success_output}"
 printf 'main-archive' >"${success_output}/qlib_bin.tar.gz"
 printf 'daily-basic-archive' >"${success_output}/daily_basic_qlib_features.tar.gz"
+printf 'market-delta' >"${success_output}/qlib_bin_delta.tar.gz"
+printf 'daily-basic-delta' >"${success_output}/daily_basic_qlib_features_delta.tar.gz"
 cat >"${TMP_ROOT}/success-state.json" <<'JSON'
 {"assets":[{"id":41,"name":"qlib_bin.tar.gz","size":1},{"id":42,"name":"daily_basic_qlib_features.tar.gz","size":1}]}
 JSON
@@ -109,8 +111,12 @@ PATH="${MOCK_BIN}:${PATH}" PYTHON_BIN="${MOCK_BIN}/python3" GITHUB_TOKEN=*** \
 
 assert_contains "Verified qlib_bin.tar.gz" "${TMP_ROOT}/success.out"
 assert_contains "Verified daily_basic_qlib_features.tar.gz" "${TMP_ROOT}/success.out"
+assert_contains "Verified qlib_bin_delta.tar.gz" "${TMP_ROOT}/success.out"
+assert_contains "Verified daily_basic_qlib_features_delta.tar.gz" "${TMP_ROOT}/success.out"
 assert_contains "name=qlib_bin.tar.gz" "${TMP_ROOT}/success-curl.log"
 assert_contains "name=daily_basic_qlib_features.tar.gz" "${TMP_ROOT}/success-curl.log"
+assert_contains "name=qlib_bin_delta.tar.gz" "${TMP_ROOT}/success-curl.log"
+assert_contains "name=daily_basic_qlib_features_delta.tar.gz" "${TMP_ROOT}/success-curl.log"
 assert_contains "/releases/assets/41" "${TMP_ROOT}/success-curl.log"
 assert_contains "/releases/assets/42" "${TMP_ROOT}/success-curl.log"
 if [[ -e "${success_output}" ]]; then
@@ -126,8 +132,10 @@ assets = json.loads(pathlib.Path(sys.argv[1]).read_text())["assets"]
 assert {item["name"] for item in assets} == {
     "qlib_bin.tar.gz",
     "daily_basic_qlib_features.tar.gz",
+    "qlib_bin_delta.tar.gz",
+    "daily_basic_qlib_features_delta.tar.gz",
 }
 assert all(item["size"] > 0 for item in assets)
 PY
 
-echo "upload_release.sh dual-asset tests passed"
+echo "upload_release.sh four-asset tests passed"

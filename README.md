@@ -45,12 +45,14 @@ deep-alpha update
 deep-alpha update --dataset daily-basic
 ```
 
-每次正式发布包含两个相互兼容的文件：
+每次正式发布最多包含四个相互兼容的文件：
 
 - `qlib_bin.tar.gz`：主 Qlib 数据包，包含交易日历、证券列表、行情 Feature 和指数成分。
-- `daily_basic_qlib_features.tar.gz`：`daily_basic` Feature 增量包，安装到主 Provider 的 `features/` 目录中。
+- `daily_basic_qlib_features.tar.gz`：`daily_basic` 全量历史 Feature 扩展包，安装到主 Provider 的 `features/` 目录中。
+- `qlib_bin_delta.tar.gz`：从上一成功 Release 追加到本 Release 的行情时间增量。
+- `daily_basic_qlib_features_delta.tar.gz`：与行情 delta 配对的 daily-basic 时间增量。
 
-两个包使用完全相同的 Qlib 交易日历。发布脚本会在上传前验证日历 SHA-256，避免 Feature 日期偏移。
+四个包使用完全相同的目标 Qlib 交易日历。两个 delta 只在上一成功基线到当前 Release 是严格日历尾部追加、且历史值未变化时发布；否则仍发布两个全量包，客户端应配对回退全量更新。
 
 ## 目录
 
@@ -118,15 +120,18 @@ tar -tzf qlib_bin.tar.gz >/dev/null
 tar -tzf daily_basic_qlib_features.tar.gz >/dev/null
 ```
 
-如果已经克隆本仓库，可进一步验证两个发布包是否使用相同日历：
+如果 Release 同时提供两个 temporal delta，可联合验证四个发布包：
 
 ```bash
 python qlib/validate_release_archives.py \
   qlib_bin.tar.gz \
-  daily_basic_qlib_features.tar.gz
+  daily_basic_qlib_features.tar.gz \
+  qlib_bin_delta.tar.gz \
+  daily_basic_qlib_features_delta.tar.gz \
+  --release-tag "${RELEASE_TAG}"
 ```
 
-校验成功时会输出两个包共享的日历 SHA-256。
+校验成功时会输出全量包和两个 delta 共享的目标日历 SHA-256。只传前两个参数仍可校验全量包兼容性。
 
 ## 安装主数据包
 
